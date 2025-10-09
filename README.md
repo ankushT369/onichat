@@ -1,2 +1,2 @@
 # anochat
-An anonymous high performance self-hosted chat server can also be used for general chat service.
+A high-performance anonymous chat client and server that runs over TOR and supports general messaging.
