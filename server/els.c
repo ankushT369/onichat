@@ -4,9 +4,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "els.h"
-#include "vendor/klib/khash.h"
+#include "map.h"
+#include "protocol.h"
+
 
 epoll_event events[MAX_EVENT];
 fd_t client_fd_arr[100] = {0};
@@ -24,16 +27,6 @@ struct els {
     address* addr;
 };
 
-typedef struct connection {
-    fd_t client;
-    state c_st;
-
-    const char* username;
-    size_t usrlen;
-} connection;
-
-
-KHASH_MAP_INIT_INT(client, connection*);
 
 /* Default configuration */
 static const els_config ELS_DEFAULT_CONFIG = {
@@ -42,6 +35,7 @@ static const els_config ELS_DEFAULT_CONFIG = {
     .backlog = 128,         /* Reasonable backlog */
     .max_conn = 1000        /* Maximum connections */
 };
+
 
 els* els_create(const els_config* config) {
     if (!config)
@@ -77,7 +71,7 @@ els* els_create(const els_config* config) {
     ret = bind(e->server, (const struct sockaddr*)&e->addr->addr, e->addr->addrlen);
 
     listen(e->server, e->backlog);
-    printf("HEY in els.c: %s, %d, %d\n", e->host, e->server, e->backlog);
+    printf("server is running on: %s, %d, %d\n", e->host, e->server, e->backlog);
 
     /* creates an epoll instance */
     e->epfd = epoll_create1(EPOLL_CLOEXEC);
@@ -96,6 +90,33 @@ els* els_create(const els_config* config) {
     return e;
 }
 
+void get_username(khash_t(strset)* set, connection* c) {
+    static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    static int initialized = 0;
+    if (!initialized) {
+        srand(time(NULL));  // seed random once
+        initialized = 1;
+    }
+
+    int unique = 0;
+    while (!unique) {
+        /* generate random length 6–16 */
+        int len = 6 + rand() % 11;  // 6..16
+
+        /* fill the buffer */
+        for (int i = 0; i < len; i++) {
+            c->username[i] = charset[rand() % (sizeof(charset) - 1)];
+        }
+        c->username[len] = '\0';
+        c->usrlen = len;
+
+        /* check uniqueness */
+        if (!set_find(set, c->username)) {
+            set_insert(set, c->username);  // store pointer in the set
+            unique = 1;
+        }
+    }
+}
 connection* els_accept(els* e, connection** conn) {
     connection* c = malloc(sizeof(connection));
     
@@ -115,58 +136,9 @@ connection* els_accept(els* e, connection** conn) {
     return *conn;
 }
 
-void add_client(khash_t(client)* map, connection* c) {
-    int ret;
-    khiter_t k = kh_put(client, map, c->client, &ret);
-    kh_value(map, k) = c;
-}
-
-connection* get_client(khash_t(client)* map, fd_t fd) {
-    khiter_t k = kh_get(client, map, fd);
-    return (k != kh_end(map)) ? kh_value(map, k) : NULL;
-}
-
-void send_message(fd_t client_fd, connection *c, const char *msg, size_t msg_len) {
-    // Convert lengths to network byte order
-    uint32_t username_len_net = htonl(c->usrlen);
-    uint32_t msg_len_net = htonl(msg_len);
-
-    // 1️⃣ send username length
-    ssize_t sent = 0;
-    while (sent < sizeof(username_len_net)) {
-        ssize_t s = write(client_fd, ((char*)&username_len_net) + sent, sizeof(username_len_net) - sent);
-        if (s <= 0) return; // error or disconnect
-        sent += s;
-    }
-
-    // 2️⃣ send username
-    sent = 0;
-    while (sent < c->usrlen) {
-        ssize_t s = write(client_fd, c->username + sent, c->usrlen - sent);
-        if (s <= 0) return;
-        sent += s;
-    }
-
-    // 3️⃣ send message length
-    sent = 0;
-    while (sent < sizeof(msg_len_net)) {
-        ssize_t s = write(client_fd, ((char*)&msg_len_net) + sent, sizeof(msg_len_net) - sent);
-        if (s <= 0) return;
-        sent += s;
-    }
-
-    // 4️⃣ send message
-    sent = 0;
-    while (sent < msg_len) {
-        ssize_t s = write(client_fd, msg + sent, msg_len - sent);
-        if (s <= 0) return;
-        sent += s;
-    }
-}
-
-
 void els_run(els* e) {
     khash_t(client) *conn_map = kh_init(client);
+    khash_t(strset) *h = kh_init(strset);
 
     while (e->running) {
         int event_cnt = epoll_wait(e->epfd, events, MAX_EVENT, -1);
@@ -184,8 +156,7 @@ void els_run(els* e) {
         for (size_t i = 0; i < (size_t)event_cnt; i++) {
             if (events[i].data.fd == e->server) {
                 els_accept(e, &c);
-                /* make the wrapper of hashmap here ..... */
-                add_client(conn_map, c);
+                add_client_map(conn_map, c);
                 printf("[+] Client connected\n");
             }
             else {
@@ -195,31 +166,48 @@ void els_run(els* e) {
                 ssize_t n = read(client_fd, buffer, sizeof(buffer) - 1);
                 
                 if (n > 0) {
-                    if (client_fd_arr[client_fd] == 0) {
-                         printf("first auth: %s\n", buffer);
-                         connection* c = get_client(conn_map, client_fd);
-                         c->username = strndup(buffer, n);
-                         c->usrlen = n;
-                         client_fd_arr[client_fd] = 1;
+                    uint8_t cmd = buffer[0];
+
+                    /* register client protocol */ 
+                    if (client_fd_arr[client_fd] == 0 && cmd == CMD_GET_USERNAME) {
+                        connection* c = get_client_map(conn_map, client_fd);
+                        /* generate random user name which doesnt exist in server */
+                        get_username(h, c);
+                        
+                        struct response resp;
+                        resp.status = 0;
+                        strncpy(resp.data, c->username, c->usrlen);
+                        resp.data[sizeof(resp.data) - 1] = '\0';
+
+                        //printf("username: %s\n", c->username);
+                        client_fd_arr[client_fd] = 1;
+
+                        write(client_fd, &resp, sizeof(resp));
                     }
+
+                    /* message protocol */
                     else {
                         buffer[n] = '\0';
                         printf("[Client %d]: %s\n", client_fd, buffer);
-                        /* send the msg to other clients */
+                        /* send the msg to other clients use brute force for now later optimize it */
                         for (fd_t j = 0; j < 100; j++) {
                             if (client_fd_arr[j] == 1 && j != client_fd) {
-                                connection* c = get_client(conn_map, j);
-                                //printf("len: %zu\n", c->usrlen);
-                                //c->username = strndup(buffer, n);
+                                connection* c = get_client_map(conn_map, j);
                                 write(j, buffer, n);
-                                //send_message(j, c, buffer, n);
                             }
                         }
                     }
                 }
+
                 else {
                     /* close the client connection */
+                    client_fd_arr[client_fd] = 0;
                     epoll_ctl(e->epfd, EPOLL_CTL_DEL, client_fd, NULL);
+                    connection* c = get_client_map(conn_map, client_fd);
+                    free(c);
+                    set_delete(h, c->username);
+                    remove_client_map(conn_map, client_fd);
+
                     close(client_fd);
                     printf("[-] [Client %d] disconnected\n", client_fd);
                 }
