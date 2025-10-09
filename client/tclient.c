@@ -9,10 +9,12 @@
 
 #include "color.h"
 #include "tconnect.h"
+#include "message.h"
 
 #define BUF_SIZE 4096
 
 char prompt[256];  // buffer to store the dynamic prompt
+struct response resp;
 
 /* Thread to continuously receive messages */
 void *recv_loop(void *arg) {
@@ -28,16 +30,16 @@ void *recv_loop(void *arg) {
 
         buf[n] = '\0';
 
-        // Temporarily clear the current input line drawn by readline
+        /* Temporarily clear the current input line drawn by readline */
         rl_save_prompt();
         rl_replace_line("", 0);
         rl_redisplay();
 
-        // Print the received message cleanly on a new line
+        /* Print the received message cleanly on a new line */
         printf("\n💬 %s\n", buf);
         fflush(stdout);
 
-        // Redraw the prompt and whatever user was typing
+        /* Redraw the prompt and whatever user was typing */
         rl_restore_prompt();
         rl_redisplay();
     }
@@ -45,14 +47,36 @@ void *recv_loop(void *arg) {
     return NULL;
 }
 
-void register_user(char* username, int sock) {
+int register_user(int sock) {
+    uint8_t cmd = CMD_GET_USERNAME;
 
-    write(sock, username, strlen(username));
+    ssize_t n = write(sock, &cmd, sizeof(cmd));
+    n = read(sock, &resp, sizeof(resp));
+
+    if (resp.status == 0) {
+        printf("Server OK: %s\n", resp.data);
+        return 1;
+    }
+    else {
+        printf("Server ERROR: %s\n", resp.data);
+        return -1;
+    }
+}
+
+void construct_prompt(char* username, pmt_color color) {
+    /* get current time */
+    time_t t = time(NULL);
+    struct tm tm = *localtime(&t);
+    char timestr[16];
+    sprintf(timestr, "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+    /* construct the prompt */
+    snprintf(prompt, sizeof(prompt), "%s[%s %s]%s ", color.start, username, timestr, color.end);
 
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 4) {
+    if (argc != 3) {
         fprintf(stderr, "Usage: %s <onion_address> <port> <username>\n", argv[0]);
         return 1;
     }
@@ -63,34 +87,24 @@ int main(int argc, char *argv[]) {
     /* tor parsing */
     const char *onion = argv[1];
     int port = atoi(argv[2]);
-    char *username = argv[3];
+    char *username = "me";
 
     int sock = connect_via_tor(onion, port);
     if (sock < 0) return 1;
 
+    /* register user will use register user protocol */
+    if (register_user(sock) == -1) {
+        return EXIT_FAILURE;
+    }
+
     pthread_t recv_thread;
     pthread_create(&recv_thread, NULL, recv_loop, &sock);
 
+    construct_prompt(username, color);
 
-    /* get current time */
-    time_t t = time(NULL);
-    struct tm tm = *localtime(&t);
-    char timestr[16];
-    sprintf(timestr, "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
-
-    /* construct the prompt */
-    snprintf(prompt, sizeof(prompt), "%s[%s %s]%s ", color.start, username, timestr, color.end);
-
-    register_user(username, sock);
     char *line;
     while ((line = readline(prompt)) != NULL) {
-        time_t t = time(NULL);
-        struct tm tm = *localtime(&t);
-        char timestr[16];
-        sprintf(timestr, "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
-
-        /* construct the prompt */
-        snprintf(prompt, sizeof(prompt), "%s[%s %s]%s ", color.start, username, timestr, color.end);
+        construct_prompt(username, color);
 
         if (strlen(line) == 0) {
             free(line);
@@ -104,7 +118,6 @@ int main(int argc, char *argv[]) {
         }
 
         write(sock, line, strlen(line));
-        //write(sock, "\n", 1);
         free(line);
     }
 

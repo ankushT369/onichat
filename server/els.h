@@ -13,8 +13,6 @@ typedef struct address address;
 typedef struct epoll_event epoll_event;
 
 typedef struct els els;
-typedef struct connection connection;
-
 
 typedef enum client_state {
     C_DIS,
@@ -29,11 +27,19 @@ typedef struct els_config {
 } els_config;
 
 
+typedef struct connection {
+    fd_t client;
+    state c_st;
+
+    char username[16];
+    size_t usrlen;
+} connection;
+
+
 struct address {
     struct sockaddr_storage addr;
     socklen_t addrlen;
 };
-
 
 
 els* els_create(const els_config* config);
