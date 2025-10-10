@@ -28,7 +28,7 @@ void *recv_loop(void *arg) {
             exit(0);
         }
 
-        buf[n] = '\0';
+	buf[n] = '\0';
 
         /* Temporarily clear the current input line drawn by readline */
         rl_save_prompt();
@@ -36,7 +36,7 @@ void *recv_loop(void *arg) {
         rl_redisplay();
 
         /* Print the received message cleanly on a new line */
-        printf("\n💬 %s\n", buf);
+	printf("\n💬 %s\n", buf);
         fflush(stdout);
 
         /* Redraw the prompt and whatever user was typing */
@@ -77,7 +77,7 @@ void construct_prompt(char* username, pmt_color color) {
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
-        fprintf(stderr, "Usage: %s <onion_address> <port> <username>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <onion_address> <port>\n", argv[0]);
         return 1;
     }
 
