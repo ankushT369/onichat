@@ -27,7 +27,6 @@ struct els {
     address* addr;
 };
 
-
 /* Default configuration */
 static const els_config ELS_DEFAULT_CONFIG = {
     .host = NULL,           /* Listen on all interfaces */
@@ -35,7 +34,6 @@ static const els_config ELS_DEFAULT_CONFIG = {
     .backlog = 128,         /* Reasonable backlog */
     .max_conn = 1000        /* Maximum connections */
 };
-
 
 els* els_create(const els_config* config) {
     if (!config)
@@ -58,6 +56,9 @@ els* els_create(const els_config* config) {
     hints.ai_flags = AI_PASSIVE;
 
     int ret = getaddrinfo(e->host, port_str, &hints, &res);
+    if (ret == 0) {
+        //
+    }
 
     memcpy(&e->addr->addr, res->ai_addr, res->ai_addrlen);
     e->addr->addrlen = res->ai_addrlen;
@@ -117,6 +118,7 @@ void get_username(khash_t(strset)* set, connection* c) {
         }
     }
 }
+
 connection* els_accept(els* e, connection** conn) {
     connection* c = malloc(sizeof(connection));
     
@@ -134,6 +136,50 @@ connection* els_accept(els* e, connection** conn) {
     *conn = c;
 
     return *conn;
+}
+
+r_packet recv_data(fd_t client_fd) {
+    r_packet packet; 
+    
+    /* Step 2: read the length */
+    size_t received = 0;
+    ssize_t n;
+    while (received < sizeof(packet.len)) {
+        n = read(client_fd, ((char*)&packet.len) + received, sizeof(packet.len) - received);
+        if (n <= 0) {
+            perror("read len");
+            close(client_fd);
+            //return;
+        }
+        received += n;
+    }
+
+    /* allocate and read the payload */
+    char *payload = malloc(packet.len + 1);
+    if (!payload) {
+        fprintf(stderr, "malloc failed\n");
+        close(client_fd);
+        //return;
+    }
+
+    received = 0;
+    while (received < packet.len) {
+        n = read(client_fd, payload + received, packet.len - received);
+        if (n <= 0) {
+            perror("read payload");
+            free(payload);
+            close(client_fd);
+            //return;
+        }
+        received += n;
+    }
+    payload[packet.len] = '\0';  // null-terminate for safety
+
+    packet.payload = payload;
+    /* now you can use it */
+    printf("[Client %d]: %s\n", client_fd, packet.payload);
+
+    return packet;
 }
 
 void els_run(els* e) {
@@ -161,15 +207,14 @@ void els_run(els* e) {
             }
             else {
                 /* Handle client */
-                char buffer[BUFFER_SIZE];
+                uint8_t status;
+                ssize_t n = 0;
                 int client_fd = events[i].data.fd;
-                ssize_t n = read(client_fd, buffer, sizeof(buffer) - 1);
-                
-                if (n > 0) {
-                    uint8_t cmd = buffer[0];
+                n = read(client_fd, &status, sizeof(status));
 
-                    /* register client protocol */ 
-                    if (client_fd_arr[client_fd] == 0 && cmd == CMD_GET_USERNAME) {
+                if (n > 0) {
+                    /* register protocol */ 
+                    if (status == CMD_GET_USERNAME && client_fd_arr[client_fd] == 0) {
                         connection* c = get_client_map(conn_map, client_fd);
                         /* generate random user name which doesnt exist in server */
                         get_username(h, c);
@@ -179,34 +224,61 @@ void els_run(els* e) {
                         strncpy(resp.data, c->username, c->usrlen);
                         resp.data[sizeof(resp.data) - 1] = '\0';
 
-                        //printf("username: %s\n", c->username);
                         client_fd_arr[client_fd] = 1;
 
                         write(client_fd, &resp, sizeof(resp));
                     }
+                    else {
+                        r_packet rpck = recv_data(client_fd);
 
-                    /* message protocol */
+                        connection* s_conn = get_client_map(conn_map, client_fd);
+                        s_packet spck;
+                        spck.usrlen = s_conn->usrlen;
+                        spck.username = s_conn->username;
+                        spck.len = rpck.len;
+                        spck.payload = rpck.payload;
+
+                        for (fd_t j = 0; j < 100; j++) {
+                            if (client_fd_arr[j] == 1 && j != client_fd) {
+                                write(j, &spck.usrlen, sizeof(spck.usrlen));
+                                write(j, spck.username, spck.usrlen);
+
+                                write(j, &spck.len, sizeof(spck.len));
+                                size_t sent = 0;
+                                while (sent < spck.len) {
+                                    ssize_t n = write(j, spck.payload + sent, spck.len - sent);
+                                    if (n <= 0) { perror("write"); break; }
+                                    sent += n;
+                                }
+                            }
+                        }
+
+                    }
+                    /* message protocol
                     else {
                         buffer[n] = '\0';
                         printf("[Client %d]: %s\n", client_fd, buffer);
-                        /* send the msg to other clients use brute force for now later optimize it */
+                        // send the msg to other clients use brute force for now later optimize it
                         for (fd_t j = 0; j < 100; j++) {
                             if (client_fd_arr[j] == 1 && j != client_fd) {
-                                connection* c = get_client_map(conn_map, j);
+                                get_client_map(conn_map, j);
                                 write(j, buffer, n);
                             }
                         }
                     }
-                }
+                    */
 
+                }
                 else {
                     /* close the client connection */
                     client_fd_arr[client_fd] = 0;
                     epoll_ctl(e->epfd, EPOLL_CTL_DEL, client_fd, NULL);
+
                     connection* c = get_client_map(conn_map, client_fd);
-                    free(c);
                     set_delete(h, c->username);
                     remove_client_map(conn_map, client_fd);
+
+                    free(c);
 
                     close(client_fd);
                     printf("[-] [Client %d] disconnected\n", client_fd);
