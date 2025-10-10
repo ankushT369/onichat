@@ -20,7 +20,8 @@ void remove_client_map(khash_t(client)* map, fd_t fd) {
 
 int set_insert(khash_t(strset)* set, char* s) {
     int ret;
-    khiter_t k = kh_put(strset, set, s, &ret);
+    kh_put(strset, set, s, &ret);
+    //khiter_t k = 
     if (ret == 0) {
         // already exists, do NOT free your pointer
         return 0;

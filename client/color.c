@@ -31,7 +31,7 @@ int get_terminal_bg_color(int *r, int *g, int *b) {
 
     /* Read response */
     char buf[128] = {0};
-    int i = 0;
+    long unsigned int i = 0;
     char c;
     /* Wait for response: format is ESC ] 11 ; rgb:XXXX/YYYY/ZZZZ BEL */
     while (i < sizeof(buf)-1 && read(STDIN_FILENO, &c, 1) == 1) {
