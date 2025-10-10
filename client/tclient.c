@@ -77,7 +77,7 @@ void construct_prompt(char* username, pmt_color color) {
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
-        fprintf(stderr, "Usage: %s <onion_address> <port> <username>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <onion_address> <port>\n", argv[0]);
         return 1;
     }
 
