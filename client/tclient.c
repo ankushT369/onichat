@@ -28,7 +28,7 @@ void *recv_loop(void *arg) {
             exit(0);
         }
 
-	buf[n] = '\0';
+        buf[n] = '\0';
 
         /* Temporarily clear the current input line drawn by readline */
         rl_save_prompt();
@@ -36,7 +36,7 @@ void *recv_loop(void *arg) {
         rl_redisplay();
 
         /* Print the received message cleanly on a new line */
-	printf("\n💬 %s\n", buf);
+        printf("\n💬 %s\n", buf);
         fflush(stdout);
 
         /* Redraw the prompt and whatever user was typing */
