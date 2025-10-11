@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/ankushT369/onichat/blob/main/docs/anochat.png" alt="Anochat Logo" width="200"/>
+  <img src="https://github.com/ankushT369/onichat/blob/main/docs/anochat.png" alt="Anochat Logo"/>
 </p>
 
 # anochat
