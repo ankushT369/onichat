@@ -4,12 +4,14 @@
 #include <string.h>
 #include <netdb.h>
 #include <stdio.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 #include "tconnect.h"
 
 
 /* Simple SOCKS5 connection through Tor to .onion server */
-int connect_via_tor(const char *onion_addr, int dest_port) {
+int connect_via_tor(const client_conf conf) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         perror("socket");
@@ -27,7 +29,7 @@ int connect_via_tor(const char *onion_addr, int dest_port) {
         return -1;
     }
 
-    /* 1. SOCKS5 handshake */
+    /* SOCKS5 handshake */
     unsigned char handshake[] = {0x05, 0x01, 0x00};  // ver=5, nmethods=1, method=no auth
     write(sock, handshake, sizeof(handshake));
 
@@ -47,13 +49,13 @@ int connect_via_tor(const char *onion_addr, int dest_port) {
     req[len++] = 0x00;  // reserved
     req[len++] = 0x03;  // atyp = domain name
 
-    size_t domain_len = strlen(onion_addr);
+    size_t domain_len = strlen(conf.url);
     req[len++] = (unsigned char)domain_len;
-    memcpy(req + len, onion_addr, domain_len);
+    memcpy(req + len, conf.url, domain_len);
     len += domain_len;
 
-    req[len++] = (dest_port >> 8) & 0xFF;
-    req[len++] = dest_port & 0xFF;
+    req[len++] = (conf.port >> 8) & 0xFF;
+    req[len++] = conf.port & 0xFF;
 
     write(sock, req, len);
 
@@ -64,6 +66,43 @@ int connect_via_tor(const char *onion_addr, int dest_port) {
         return -1;
     }
 
-    printf("✅ Connected to %s via Tor!\n", onion_addr);
+    printf("✅ Connected to %s via Tor!\n", conf.url);
     return sock;
 }
+
+int reconnect(const client_conf conf) {
+    printf("Reconnecting to %s:%d (retries=%d, delay=%d sec)\n",
+           conf.url, conf.port, conf.retry_no, conf.retry_time);
+
+    // Copy config by value (safe since there are no heap pointers)
+    client_conf c = conf;
+
+    if (!c.retry) {
+        printf("Retry disabled in config.\n");
+        return -1;
+    }
+
+    for (int attempt = 1; attempt <= c.retry_no; attempt++) {
+        printf("Attempt %d/%d...\n", attempt, c.retry_no);
+        int sock = connect_via_tor(c);
+        if (sock != -1) {
+            rl_save_prompt();
+            rl_replace_line("", 0);
+            rl_redisplay();
+
+            fflush(stdout);
+
+            rl_restore_prompt();
+            rl_redisplay();
+            return sock;
+        }
+
+        printf("Failed, retrying in %d seconds...\n", c.retry_time);
+        sleep(c.retry_time);
+    }
+
+    printf("❌ All reconnect attempts failed.\n");
+    return -1;
+}
+
+

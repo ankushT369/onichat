@@ -10,9 +10,10 @@
 #include "map.h"
 #include "protocol.h"
 
+#define MAX_CLIENT 100
 
 epoll_event events[MAX_EVENT];
-fd_t client_fd_arr[100] = {0};
+fd_t client_fd_arr[MAX_CLIENT] = {0};
 
 struct els {
     fd_t server;
@@ -45,7 +46,6 @@ els* els_create(const els_config* config) {
     e->host = config->host;
     e->port = config->port;
     e->backlog = config->backlog;
-
 
     struct addrinfo hints = {0}, *res = NULL;
     char port_str[6];
@@ -91,6 +91,10 @@ els* els_create(const els_config* config) {
     return e;
 }
 
+void els_destroy(els* e) {
+    close(e->server);
+}
+
 void get_username(khash_t(strset)* set, connection* c) {
     static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     static int initialized = 0;
@@ -102,7 +106,7 @@ void get_username(khash_t(strset)* set, connection* c) {
     int unique = 0;
     while (!unique) {
         /* generate random length 6–16 */
-        int len = 6 + rand() % 11;  // 6..16
+        int len = 5 + rand() % 11;  // 6..16
 
         /* fill the buffer */
         for (int i = 0; i < len; i++) {
@@ -123,7 +127,6 @@ connection* els_accept(els* e, connection** conn) {
     connection* c = malloc(sizeof(connection));
     
     c->client = accept(e->server, (struct sockaddr*)&e->addr->addr, &e->addr->addrlen);
-    //client_fd_arr[c->client] = 1;
     c->c_st = C_CON;
 
     struct epoll_event event = {
@@ -138,49 +141,6 @@ connection* els_accept(els* e, connection** conn) {
     return *conn;
 }
 
-r_packet recv_data(fd_t client_fd) {
-    r_packet packet; 
-    
-    /* Step 2: read the length */
-    size_t received = 0;
-    ssize_t n;
-    while (received < sizeof(packet.len)) {
-        n = read(client_fd, ((char*)&packet.len) + received, sizeof(packet.len) - received);
-        if (n <= 0) {
-            perror("read len");
-            close(client_fd);
-            //return;
-        }
-        received += n;
-    }
-
-    /* allocate and read the payload */
-    char *payload = malloc(packet.len + 1);
-    if (!payload) {
-        fprintf(stderr, "malloc failed\n");
-        close(client_fd);
-        //return;
-    }
-
-    received = 0;
-    while (received < packet.len) {
-        n = read(client_fd, payload + received, packet.len - received);
-        if (n <= 0) {
-            perror("read payload");
-            free(payload);
-            close(client_fd);
-            //return;
-        }
-        received += n;
-    }
-    payload[packet.len] = '\0';  // null-terminate for safety
-
-    packet.payload = payload;
-    /* now you can use it */
-    printf("[Client %d]: %s\n", client_fd, packet.payload);
-
-    return packet;
-}
 
 void els_run(els* e) {
     khash_t(client) *conn_map = kh_init(client);
@@ -188,15 +148,14 @@ void els_run(els* e) {
 
     while (e->running) {
         int event_cnt = epoll_wait(e->epfd, events, MAX_EVENT, -1);
-        /*
-         *  comeback to it later 
-         *  if (event_cnt < 0) {
-         *      if (stop_server) break; 
-         *      else continue; // some other signal 
-         *      perror("epoll_wait");
-         *      break;
-         *  }
-        */
+        
+        if (event_cnt < 0) {
+            //if (stop_server) break; 
+            //else continue; // some other signal 
+            perror("epoll_wait");
+            break;
+        }
+
         connection *c = NULL;
 
         for (size_t i = 0; i < (size_t)event_cnt; i++) {
@@ -208,9 +167,8 @@ void els_run(els* e) {
             else {
                 /* Handle client */
                 uint8_t status;
-                ssize_t n = 0;
                 int client_fd = events[i].data.fd;
-                n = read(client_fd, &status, sizeof(status));
+                ssize_t n = read(client_fd, &status, sizeof(status));
 
                 if (n > 0) {
                     /* register protocol */ 
@@ -228,25 +186,23 @@ void els_run(els* e) {
 
                         write(client_fd, &resp, sizeof(resp));
                     }
+                    /* message protocol */
                     else {
-                        r_packet rpck = recv_data(client_fd);
-
                         connection* s_conn = get_client_map(conn_map, client_fd);
-                        s_packet spck;
-                        spck.usrlen = s_conn->usrlen;
-                        spck.username = s_conn->username;
-                        spck.len = rpck.len;
-                        spck.payload = rpck.payload;
 
-                        for (fd_t j = 0; j < 100; j++) {
+                        packet rpack = recv_data(client_fd);
+                        server_packet spack = prepare_send_packet(s_conn, rpack);
+
+                        /* NOTE: Later to be optimise */
+                        for (fd_t j = 0; j < MAX_CLIENT; j++) {
                             if (client_fd_arr[j] == 1 && j != client_fd) {
-                                write(j, &spck.usrlen, sizeof(spck.usrlen));
-                                write(j, spck.username, spck.usrlen);
+                                write(j, &spack.usrlen, sizeof(spack.usrlen));
+                                write(j, spack.username, spack.usrlen);
 
-                                write(j, &spck.len, sizeof(spck.len));
+                                write(j, &spack.len, sizeof(spack.len));
                                 size_t sent = 0;
-                                while (sent < spck.len) {
-                                    ssize_t n = write(j, spck.payload + sent, spck.len - sent);
+                                while (sent < spack.len) {
+                                    ssize_t n = write(j, spack.payload + sent, spack.len - sent);
                                     if (n <= 0) { perror("write"); break; }
                                     sent += n;
                                 }
@@ -254,20 +210,6 @@ void els_run(els* e) {
                         }
 
                     }
-                    /* message protocol
-                    else {
-                        buffer[n] = '\0';
-                        printf("[Client %d]: %s\n", client_fd, buffer);
-                        // send the msg to other clients use brute force for now later optimize it
-                        for (fd_t j = 0; j < 100; j++) {
-                            if (client_fd_arr[j] == 1 && j != client_fd) {
-                                get_client_map(conn_map, j);
-                                write(j, buffer, n);
-                            }
-                        }
-                    }
-                    */
-
                 }
                 else {
                     /* close the client connection */

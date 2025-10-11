@@ -9,7 +9,8 @@
 
 #include "color.h"
 #include "tconnect.h"
-#include "message.h"
+#include "ini.h"
+#include "protocol.h"
 
 #define BUF_SIZE 4096
 
@@ -19,70 +20,95 @@ char prompt[256];  // buffer to store the dynamic prompt
 struct response resp;
 pmt_color gcolor;
 
+int sock = -1;
+
+struct client_conf config = {
+    .url[0] = '\0',
+    .port = 0,
+    .persist = false,
+    .retry = false,
+    .retry_time = 0, 
+    .retry_no = 0,
+};
+
 /* Thread to continuously receive messages */
 void *recv_loop(void *arg) {
-    int sock = *(int *)arg;
-
     while (1) {
-        r_packet packet;
+        server_packet pack;
         ssize_t n;
         size_t received = 0;
 
         /* Read username length */
         received = 0;
-        while (received < sizeof(packet.usrlen)) {
-            n = read(sock, ((char*)&packet.usrlen) + received, sizeof(packet.usrlen) - received);
+        while (received < sizeof(pack.usrlen)) {
+            n = read(sock, ((char*)&pack.usrlen) + received, sizeof(pack.usrlen) - received);
             if (n <= 0) {
                 printf("\n🔌 Disconnected from server.\n");
-                exit(0);
+                sock = reconnect(config);
+                if (sock == -1)
+                    exit(0);
+                recv_loop(NULL);
+                //exit(0);
             }
             received += n;
         }
 
         /* Read username */
-        packet.username = malloc(packet.usrlen + 1);
-        if (!packet.username) {
+        pack.username = malloc(pack.usrlen + 1);
+        if (!pack.username) {
             perror("malloc username");
             exit(1);
         }
         received = 0;
-        while (received < packet.usrlen) {
-            n = read(sock, packet.username + received, packet.usrlen - received);
+        while (received < pack.usrlen) {
+            n = read(sock, pack.username + received, pack.usrlen - received);
             if (n <= 0) {
                 printf("\n🔌 Disconnected from server.\n");
-                exit(0);
+                sock = reconnect(config);
+                if (sock == -1)
+                    exit(0);
+
+                recv_loop(NULL);
             }
             received += n;
         }
-        packet.username[packet.usrlen] = '\0';
+        pack.username[pack.usrlen] = '\0';
 
         /* Read payload length */
         received = 0;
-        while (received < sizeof(packet.len)) {
-            n = read(sock, ((char*)&packet.len) + received, sizeof(packet.len) - received);
+        while (received < sizeof(pack.len)) {
+            n = read(sock, ((char*)&pack.len) + received, sizeof(pack.len) - received);
             if (n <= 0) {
                 printf("\n🔌 Disconnected from server.\n");
-                exit(0);
+                reconnect(config);
+                if (sock == -1)
+                    exit(0);
+                recv_loop(NULL);
+                //exit(0);
             }
             received += n;
         }
 
         /* Read payload */
-        packet.payload = malloc(packet.len + 1);
-        if (!packet.payload) {
+        pack.payload = malloc(pack.len + 1);
+        if (!pack.payload) {
             perror("malloc payload");
             exit(1);
         }
         received = 0;
-        while (received < packet.len) {
-            n = read(sock, packet.payload + received, packet.len - received);
+        while (received < pack.len) {
+            n = read(sock, pack.payload + received, pack.len - received);
             if (n <= 0) {
                 printf("\n🔌 Disconnected from server.\n");
-                exit(0);
+                reconnect(config);
+                if (sock == -1)
+                    exit(0);
+                recv_loop(NULL);
+                //exit(0);
             }
             received += n;
         }
-        packet.payload[packet.len] = '\0';
+        pack.payload[pack.len] = '\0';
 
         char reply_prompt[128];
         time_t t = time(NULL);
@@ -91,21 +117,22 @@ void *recv_loop(void *arg) {
         sprintf(timestr, "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
 
         /* construct the prompt */
-        snprintf(reply_prompt, 128, "[%s %s]", packet.username, timestr);
+        snprintf(reply_prompt, 128, "[%s %s]", pack.username, timestr);
 
         /* Display message with username */
         rl_save_prompt();
         rl_replace_line("", 0);
         rl_redisplay();
 
-        printf("%s %s\n", reply_prompt, packet.payload);
+        printf("%s %s\n", reply_prompt, pack.payload);
         fflush(stdout);
 
         rl_restore_prompt();
         rl_redisplay();
 
-        free(packet.username);
-        free(packet.payload);
+        free(pack.username);
+        free(pack.payload);
+
     }
 
     return NULL;
@@ -145,20 +172,20 @@ void print_with_timestamp(char* username, pmt_color color, const char* line) {
 }
 
 size_t send_data(char* data, int sock) {
-    s_packet packet;
+    packet pack;
 
-    packet.status = CMD_SEND_MESSAGE;
-    packet.len = strlen(data);
-    packet.payload = malloc(packet.len + 1);
+    pack.status = CMD_SEND_MESSAGE;
+    pack.len = strlen(data);
+    pack.payload = malloc(pack.len + 1);
 
-    strncpy(packet.payload, data, packet.len);
+    strncpy(pack.payload, data, pack.len);
 
-    write(sock, &packet.status, sizeof(packet.status));
-    write(sock, &packet.len, sizeof(packet.len));
+    write(sock, &pack.status, sizeof(pack.status));
+    write(sock, &pack.len, sizeof(pack.len));
 
     size_t sent = 0;
-    while (sent < packet.len) {
-        ssize_t n = write(sock, packet.payload + sent, packet.len - sent);
+    while (sent < pack.len) {
+        ssize_t n = write(sock, pack.payload + sent, pack.len - sent);
         if (n <= 0) { perror("write"); exit(1); }
         sent += n;
     }
@@ -166,21 +193,48 @@ size_t send_data(char* data, int sock) {
     return sent;
 }
 
+static int handler(void* user, const char* section, const char* name, const char* value) {
+    client_conf* c = (client_conf*)user;
+
+    #define MATCH(s, n) strcmp(section, s) == 0 && strcmp(name, n) == 0
+
+    if (MATCH("client", "persist")) {
+        c->persist = (strcmp(value, "true") == 0);
+    } else if (MATCH("client", "retry")) {
+        c->retry = (strcmp(value, "true") == 0);
+    } else if (MATCH("client", "retry_time")) {
+        c->retry_time = atoi(value);
+    } else if (MATCH("client", "retry_no")) {
+        c->retry_no = atoi(value);
+    } else if (MATCH("client", "url")) {
+        strncpy(c->url, value, sizeof(c->url) - 1);
+        c->url[sizeof(c->url) - 1] = '\0'; // safety null-terminate
+    } else if (MATCH("client", "port")) {
+        c->port = (uint16_t)atoi(value);
+    } else {
+        return 0;  /* unknown section/name, stop parsing */
+    }
+
+    return 1; // continue parsing
+}
+
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s <onion_address> <port>\n", argv[0]);
+    if (argc != 1) {
+        fprintf(stderr, "Usage: %s\n", argv[0]);
+        return 1;
+    }
+
+    if (ini_parse("../../config.ini", handler, (void*)&config) < 0) {
+        printf("Can't load 'test.ini'\n");
         return 1;
     }
 
     /* color scheme */
     pmt_color color = rand_color_init();
 
-    /* tor parsing */
-    const char *onion = argv[1];
-    int port = atoi(argv[2]);
     char *username = "me";
 
-    int sock = connect_via_tor(onion, port);
+    sock = connect_via_tor(config);
     if (sock < 0) return 1;
 
     /* register user will use register protocol */
@@ -189,7 +243,7 @@ int main(int argc, char *argv[]) {
     }
 
     pthread_t recv_thread;
-    pthread_create(&recv_thread, NULL, recv_loop, &sock);
+    pthread_create(&recv_thread, NULL, recv_loop, NULL);
 
     construct_prompt(username, color);  // clean prompt
 

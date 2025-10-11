@@ -1,41 +1,74 @@
 # Compiler
 CC = gcc
-CFLAGS = -Wall -Wextra -g
 
 # Directories
 CLIENT_DIR = client
 SERVER_DIR = server
+COMMON_DIR = common
 BUILD_DIR = build
+BIN_DIR = $(BUILD_DIR)/bin
 
-# Sources
+# Build type (Debug or Release)
+BUILD ?= Debug
+
+ifeq ($(BUILD),Debug)
+    CFLAGS = -Wall -Wextra -g -I$(COMMON_DIR) -I$(SERVER_DIR) -I$(CLIENT_DIR)
+else ifeq ($(BUILD),Release)
+    CFLAGS = -O2 -I$(COMMON_DIR) -I$(SERVER_DIR) -I$(CLIENT_DIR)
+endif
+
+
+# Source files
 CLIENT_SRCS = $(wildcard $(CLIENT_DIR)/*.c)
 SERVER_SRCS = $(wildcard $(SERVER_DIR)/*.c)
+COMMON_SRCS = $(wildcard $(COMMON_DIR)/*.c)
+
+# Object files (mirror source paths in build/)
+CLIENT_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(CLIENT_SRCS))
+SERVER_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(SERVER_SRCS))
+COMMON_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(COMMON_SRCS))
 
 # Output binaries
-CLIENT_BIN = $(BUILD_DIR)/client
-SERVER_BIN = $(BUILD_DIR)/server
+CLIENT_BIN = $(BIN_DIR)/onichat
+SERVER_BIN = $(BIN_DIR)/onichat-server
 
 # Libraries
-CLIENT_LIBS = -lreadline -lpthread
-SERVER_LIBS = 
+STATIC ?= 0
+ifeq ($(STATIC),1)
+    CLIENT_LIBS = /usr/lib/x86_64-linux-gnu/libreadline.a /usr/lib/x86_64-linux-gnu/libtinfo.a -ldl -lpthread
+    SERVER_LIBS = 
+else
+    CLIENT_LIBS = -lreadline -lncurses -ldl -lpthread
+    SERVER_LIBS = 
+endif
+
 
 # Default target
-all: $(BUILD_DIR) $(CLIENT_BIN) $(SERVER_BIN)
+all: $(BIN_DIR) $(CLIENT_BIN) $(SERVER_BIN)
 
-# Ensure build directory exists
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+# Ensure bin directory exists
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
 
-# Client build
-$(CLIENT_BIN): $(CLIENT_SRCS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(CLIENT_SRCS) -o $@ $(CLIENT_LIBS)
+# Pattern rule: compile .c -> .o, create directories automatically
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	@echo "Compiling $<..."
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Server build
-$(SERVER_BIN): $(SERVER_SRCS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(SERVER_SRCS) -o $@ $(SERVER_LIBS)
+# Client build: link objects
+$(CLIENT_BIN): $(CLIENT_OBJS) $(COMMON_OBJS)
+	@echo "Linking onichat..."
+	$(CC) $(CLIENT_OBJS) $(COMMON_OBJS) -o $@ $(CLIENT_LIBS)
+
+# Server build: link objects
+$(SERVER_BIN): $(SERVER_OBJS) $(COMMON_OBJS)
+	@echo "Linking onichat-server..."
+	$(CC) $(SERVER_OBJS) $(COMMON_OBJS) -o $@ $(SERVER_LIBS)
 
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
 
 .PHONY: all clean
+
