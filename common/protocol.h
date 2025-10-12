@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "els.h"
 #include "log.h"
 #include "types.h"
 
@@ -36,17 +35,6 @@ typedef struct server_packet {
     char* payload;
 } server_packet;
 
-
-static inline server_packet prepare_send_packet(connection* conn, packet rpack) {
-    server_packet packet = { 
-            .usrlen = conn->usrlen,
-            .username = conn->username,
-            .len = rpack.len,
-            .payload = rpack.payload
-    };
-
-    return packet; 
-}
 
 packet recv_data(fd_t client_fd);
 //packet send_data(fd_t client_fd);

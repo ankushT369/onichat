@@ -38,6 +38,17 @@ static const els_config ELS_DEFAULT_CONFIG = {
     .max_conn = 1000        /* Maximum connections */
 };
 
+static inline server_packet prepare_send_packet(connection* conn, packet rpack) {
+    server_packet packet = { 
+            .usrlen = conn->usrlen,
+            .username = conn->username,
+            .len = rpack.len,
+            .payload = rpack.payload
+    };
+
+    return packet; 
+}
+
 /* TODO: Handle freeing memory */
 els* els_create(const els_config* config) {
     if (!config) {
