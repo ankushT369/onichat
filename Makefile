@@ -35,11 +35,11 @@ SERVER_BIN = $(BIN_DIR)/onichat-server
 # Libraries
 STATIC ?= 0
 ifeq ($(STATIC),1)
-    CLIENT_LIBS = /usr/lib/x86_64-linux-gnu/libreadline.a /usr/lib/x86_64-linux-gnu/libtinfo.a -ldl -lpthread
-    SERVER_LIBS = 
+    CLIENT_LIBS = /usr/lib/x86_64-linux-gnu/libreadline.a /usr/lib/x86_64-linux-gnu/libtinfo.a -ldl -lpthread -lzlog
+    SERVER_LIBS = -lzlog
 else
-    CLIENT_LIBS = -lreadline -lncurses -ldl -lpthread
-    SERVER_LIBS = 
+    CLIENT_LIBS = -lreadline -lncurses -lpthread -lzlog
+    SERVER_LIBS = -lzlog
 endif
 
 

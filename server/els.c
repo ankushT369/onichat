@@ -5,8 +5,10 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 
 #include "els.h"
+#include "log.h"
 #include "map.h"
 #include "protocol.h"
 
@@ -36,12 +38,19 @@ static const els_config ELS_DEFAULT_CONFIG = {
     .max_conn = 1000        /* Maximum connections */
 };
 
+/* TODO: Handle freeing memory */
 els* els_create(const els_config* config) {
-    if (!config)
+    if (!config) {
+        zlog_warn(server, "Loaded with default configuration\n");
         config = &ELS_DEFAULT_CONFIG;
+    }
 
     els* e = calloc(1, sizeof(els));
     e->addr = malloc(sizeof(address));
+    if (!e || !e->addr) {
+        perror("malloc failed");
+        exit(1);
+    }
 
     e->host = config->host;
     e->port = config->port;
@@ -56,26 +65,43 @@ els* els_create(const els_config* config) {
     hints.ai_flags = AI_PASSIVE;
 
     int ret = getaddrinfo(e->host, port_str, &hints, &res);
-    if (ret == 0) {
-        //
+    if (ret != 0) {
+        fprintf(stderr, "getaddrinfo failed: %s\n", gai_strerror(ret));
+        exit(1);
     }
 
     memcpy(&e->addr->addr, res->ai_addr, res->ai_addrlen);
     e->addr->addrlen = res->ai_addrlen;
 
-    fd_t server = socket(res->ai_family, SOCK_STREAM, 0);
-    e->server = server;
+    fd_t server_fd = socket(res->ai_family, SOCK_STREAM, 0);
+    e->server = server_fd;
 
     int opt = 1;
-    setsockopt(e->server, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    ret = setsockopt(e->server, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (ret != 0) {
+        fprintf(stderr, "setsockopt failed: %s\n", strerror(errno));
+        exit(1);
+    }
 
     ret = bind(e->server, (const struct sockaddr*)&e->addr->addr, e->addr->addrlen);
+    if (ret != 0) {
+        fprintf(stderr, "bind failed: %s\n", strerror(errno));
+        exit(1);
+    }
 
-    listen(e->server, e->backlog);
-    printf("server is running on: %s, %d, %d\n", e->host, e->server, e->backlog);
+
+    ret = listen(e->server, e->backlog);
+    if (ret != 0) {
+        fprintf(stderr, "listen failed: %s\n", strerror(errno));
+        exit(1);
+    }
 
     /* creates an epoll instance */
     e->epfd = epoll_create1(EPOLL_CLOEXEC);
+    if (e->epfd == -1) {
+        fprintf(stderr, "epoll_create1 failed: %s\n", strerror(errno));
+        exit(1);
+    }
 
     /* configure for input events from server fd */
     struct epoll_event event = {
@@ -84,10 +110,17 @@ els* els_create(const els_config* config) {
     };
 
     /* register the server socket to epoll instance */
-    epoll_ctl(e->epfd, EPOLL_CTL_ADD, e->server, &event);
+    ret = epoll_ctl(e->epfd, EPOLL_CTL_ADD, e->server, &event);
+    if (ret == -1) {
+        fprintf(stderr, "epoll_ctl failed: %s\n", strerror(errno));
+        exit(1);
+    }
 
     e->running = true;
     freeaddrinfo(res);
+
+    zlog_info(server, "Server started successfully: listening on %s:%u, backlog=%d",
+        e->host, e->port, e->backlog);
     return e;
 }
 
@@ -162,7 +195,7 @@ void els_run(els* e) {
             if (events[i].data.fd == e->server) {
                 els_accept(e, &c);
                 add_client_map(conn_map, c);
-                printf("[+] Client connected\n");
+                zlog_info(server, "Client connected");
             }
             else {
                 /* Handle client */
@@ -221,9 +254,8 @@ void els_run(els* e) {
                     remove_client_map(conn_map, client_fd);
 
                     free(c);
-
+                    zlog_info(server, "[Clinet: %d] disconnected", client_fd);
                     close(client_fd);
-                    printf("[-] [Client %d] disconnected\n", client_fd);
                 }
             }
         }

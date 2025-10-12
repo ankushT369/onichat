@@ -14,8 +14,7 @@
 
 #define BUF_SIZE 4096
 
-char display_prompt[64]; // for printing after user hits Enter
-
+/* global var */
 char prompt[256];  // buffer to store the dynamic prompt
 struct response resp;
 pmt_color gcolor;
@@ -33,7 +32,7 @@ struct client_conf config = {
 
 /* Thread to continuously receive messages */
 void *recv_loop(void *arg) {
-    while (1) {
+    while (true) {
         server_packet pack;
         ssize_t n;
         size_t received = 0;
@@ -218,13 +217,20 @@ static int handler(void* user, const char* section, const char* name, const char
     return 1; // continue parsing
 }
 
+void handle_args() {
+    //--path, --url, --port, --rentry, --rentry_time, --persist
+
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 1) {
         fprintf(stderr, "Usage: %s\n", argv[0]);
         return 1;
     }
 
-    if (ini_parse("../../config.ini", handler, (void*)&config) < 0) {
+    handle_args();
+
+    if (ini_parse("config.ini", handler, (void*)&config) < 0) {
         printf("Can't load 'test.ini'\n");
         return 1;
     }

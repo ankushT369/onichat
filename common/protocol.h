@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "els.h"
+#include "log.h"
 #include "types.h"
 
 enum command {

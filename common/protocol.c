@@ -43,8 +43,6 @@ packet recv_data(fd_t client_fd) {
     payload[pack.len] = '\0';  // null-terminate for safety
 
     pack.payload = payload;
-    /* now you can use it */
-    printf("[Client %d]: %s\n", client_fd, pack.payload);
 
     return pack;
 }
