@@ -24,7 +24,9 @@ packet recv_data(fd_t client_fd) {
 
     /* allocate and read the payload */
     if (pack.len <= 0 || pack.len > MAX_PAYLOAD) {
-        zlog_warn(server, "invalid packet length: client_fd=%d len=%zu", client_fd, pack.len);
+        #ifdef __ANDROID__
+            zlog_warn(server, "invalid packet length: client_fd=%d len=%zu", client_fd, pack.len);
+        #endif // __ANDROID__
         pack.len = 0;
         close(client_fd);
         return pack;
