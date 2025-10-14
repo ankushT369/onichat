@@ -9,10 +9,8 @@
 
 #include "els.h"
 #include "log.h"
-#include "map.h"
-#include "protocol.h"
 
-#define MAX_CLIENT 100
+#define MAX_CLIENT 100000
 
 epoll_event events[MAX_EVENT];
 fd_t client_fd_arr[MAX_CLIENT] = {0};
@@ -40,10 +38,10 @@ static const els_config ELS_DEFAULT_CONFIG = {
 
 static inline server_packet prepare_send_packet(connection* conn, packet rpack) {
     server_packet packet = { 
-            .usrlen = conn->usrlen,
-            .username = conn->username,
-            .len = rpack.len,
-            .payload = rpack.payload
+        .usrlen = conn->usrlen,
+        .username = conn->username,
+        .len = rpack.len,
+        .payload = rpack.payload
     };
 
     return packet; 
@@ -52,7 +50,7 @@ static inline server_packet prepare_send_packet(connection* conn, packet rpack) 
 /* TODO: Handle freeing memory */
 els* els_create(const els_config* config) {
     if (!config) {
-        zlog_warn(server, "Loaded with default configuration\n");
+        zlog_warn(server, "Configuration file not found!! loaded with default configuration\n");
         config = &ELS_DEFAULT_CONFIG;
     }
 
@@ -60,7 +58,7 @@ els* els_create(const els_config* config) {
     e->addr = malloc(sizeof(address));
     if (!e || !e->addr) {
         perror("malloc failed");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     e->host = config->host;
@@ -78,7 +76,7 @@ els* els_create(const els_config* config) {
     int ret = getaddrinfo(e->host, port_str, &hints, &res);
     if (ret != 0) {
         fprintf(stderr, "getaddrinfo failed: %s\n", gai_strerror(ret));
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     memcpy(&e->addr->addr, res->ai_addr, res->ai_addrlen);
@@ -91,27 +89,27 @@ els* els_create(const els_config* config) {
     ret = setsockopt(e->server, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     if (ret != 0) {
         fprintf(stderr, "setsockopt failed: %s\n", strerror(errno));
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     ret = bind(e->server, (const struct sockaddr*)&e->addr->addr, e->addr->addrlen);
     if (ret != 0) {
         fprintf(stderr, "bind failed: %s\n", strerror(errno));
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
 
     ret = listen(e->server, e->backlog);
     if (ret != 0) {
         fprintf(stderr, "listen failed: %s\n", strerror(errno));
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     /* creates an epoll instance */
     e->epfd = epoll_create1(EPOLL_CLOEXEC);
     if (e->epfd == -1) {
         fprintf(stderr, "epoll_create1 failed: %s\n", strerror(errno));
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     /* configure for input events from server fd */
@@ -124,7 +122,7 @@ els* els_create(const els_config* config) {
     ret = epoll_ctl(e->epfd, EPOLL_CTL_ADD, e->server, &event);
     if (ret == -1) {
         fprintf(stderr, "epoll_ctl failed: %s\n", strerror(errno));
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     e->running = true;
@@ -149,8 +147,8 @@ void get_username(khash_t(strset)* set, connection* c) {
 
     int unique = 0;
     while (!unique) {
-        /* generate random length 6–16 */
-        int len = 5 + rand() % 11;  // 6..16
+        /* generate random length 5–15 */
+        int len = 5 + rand() % 11;  // 5..15
 
         /* fill the buffer */
         for (int i = 0; i < len; i++) {
@@ -167,24 +165,68 @@ void get_username(khash_t(strset)* set, connection* c) {
     }
 }
 
-connection* els_accept(els* e, connection** conn) {
+void els_accept(els* e, connection** conn) {
     connection* c = malloc(sizeof(connection));
     
     c->client = accept(e->server, (struct sockaddr*)&e->addr->addr, &e->addr->addrlen);
-    c->c_st = C_CON;
+    if (c->client == -1) {
+        fprintf(stderr, "accept failed: %s\n", strerror(errno));
+        zlog_warn(server, "Unable to accept the client");
+        free(c);
+        *conn = NULL;
+    }
 
-    struct epoll_event event = {
+    epoll_event event = {
         .events = EPOLLIN,
         .data.fd = c->client
     };
 
-    epoll_ctl(e->epfd, EPOLL_CTL_ADD, c->client, &event);
+    int ret = epoll_ctl(e->epfd, EPOLL_CTL_ADD, c->client, &event);
+    if (ret == -1) {
+        if (errno == EEXIST) {
+            // maybe it's already registered, try modifying instead
+            epoll_ctl(e->epfd, EPOLL_CTL_MOD, c->client, &event);
+        } else {
+            fprintf(stderr, "epoll_ctl failed: %s\n", strerror(errno));
+            close(c->client);
+            free(c);
+            *conn = NULL;
+        }
+    }
 
     *conn = c;
-
-    return *conn;
 }
 
+void els_cleanup(fd_t client_fd, khash_t(strset) *h, khash_t(client)* conn_map, fd_t epfd) {
+    /* close the client connection */
+    client_fd_arr[client_fd] = 0;
+    epoll_ctl(epfd, EPOLL_CTL_DEL, client_fd, NULL);
+
+    connection* c = get_client_map(conn_map, client_fd);
+    set_delete(h, c->username);
+    remove_client_map(conn_map, client_fd);
+
+    free(c);
+    zlog_info(server, "[Clinet: %d] disconnected", client_fd);
+    close(client_fd);
+}
+
+void els_broadcast(fd_t client_fd, server_packet packet) {
+    for (fd_t j = 0; j < MAX_CLIENT; j++) {
+        if (client_fd_arr[j] == 1 && j != client_fd) {
+            write(j, &packet.usrlen, sizeof(packet.usrlen));
+            write(j, packet.username, packet.usrlen);
+
+            write(j, &packet.len, sizeof(packet.len));
+            size_t sent = 0;
+            while (sent < packet.len) {
+                ssize_t n = write(j, packet.payload + sent, packet.len - sent);
+                if (n <= 0) { perror("write"); break; }
+                sent += n;
+            }
+        }
+    }
+}
 
 void els_run(els* e) {
     khash_t(client) *conn_map = kh_init(client);
@@ -205,8 +247,10 @@ void els_run(els* e) {
         for (size_t i = 0; i < (size_t)event_cnt; i++) {
             if (events[i].data.fd == e->server) {
                 els_accept(e, &c);
+                if (c != NULL) {
+                    zlog_info(server, "Client connected");
+                }
                 add_client_map(conn_map, c);
-                zlog_info(server, "Client connected");
             }
             else {
                 /* Handle client */
@@ -232,41 +276,22 @@ void els_run(els* e) {
                     }
                     /* message protocol */
                     else {
-                        connection* s_conn = get_client_map(conn_map, client_fd);
-
                         packet rpack = recv_data(client_fd);
+                        /* check validity and clean the memeory */
+                        if (rpack.len == 0) {
+                            els_cleanup(client_fd, h, conn_map, e->epfd);
+                            continue;
+                        }
+                        connection* s_conn = get_client_map(conn_map, client_fd);
                         server_packet spack = prepare_send_packet(s_conn, rpack);
 
                         /* NOTE: Later to be optimise */
-                        for (fd_t j = 0; j < MAX_CLIENT; j++) {
-                            if (client_fd_arr[j] == 1 && j != client_fd) {
-                                write(j, &spack.usrlen, sizeof(spack.usrlen));
-                                write(j, spack.username, spack.usrlen);
-
-                                write(j, &spack.len, sizeof(spack.len));
-                                size_t sent = 0;
-                                while (sent < spack.len) {
-                                    ssize_t n = write(j, spack.payload + sent, spack.len - sent);
-                                    if (n <= 0) { perror("write"); break; }
-                                    sent += n;
-                                }
-                            }
-                        }
-
+                        els_broadcast(client_fd, spack);
                     }
                 }
                 else {
                     /* close the client connection */
-                    client_fd_arr[client_fd] = 0;
-                    epoll_ctl(e->epfd, EPOLL_CTL_DEL, client_fd, NULL);
-
-                    connection* c = get_client_map(conn_map, client_fd);
-                    set_delete(h, c->username);
-                    remove_client_map(conn_map, client_fd);
-
-                    free(c);
-                    zlog_info(server, "[Clinet: %d] disconnected", client_fd);
-                    close(client_fd);
+                    els_cleanup(client_fd, h, conn_map, e->epfd);
                 }
             }
         }
