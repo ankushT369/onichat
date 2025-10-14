@@ -21,6 +21,7 @@ pmt_color gcolor;
 
 int sock = -1;
 
+/*
 struct client_conf config = {
     .url[0] = '\0',
     .port = 0,
@@ -28,6 +29,18 @@ struct client_conf config = {
     .retry = false,
     .retry_time = 0, 
     .retry_no = 0,
+};
+*/
+
+struct client_conf config = {
+    //.backlog = 100,
+    //.max_connection = 1000,
+    .url = "",
+    .port = 0,
+    .persist = false,
+    .retry = true,
+    .retry_time = 10,
+    .retry_no = 5
 };
 
 /* Thread to continuously receive messages */
@@ -227,23 +240,75 @@ static int handler(void* user, const char* section, const char* name, const char
     return 1; // continue parsing
 }
 
-void handle_args() {
-    //--path, --url, --port, --rentry, --rentry_time, --persist
+void generate_default_config(const char* filename) {
+    FILE* f = fopen(filename, "w");
+    if (!f) {
+        perror("Failed to create config file");
+        return;
+    }
+    
+    fprintf(f, "# Auto-generated configuration file\n\n");
+    fprintf(f, "[server]\n\n");
+    //fprintf(f, "backlog = %d\n", conf.backlog);
+    //fprintf(f, "max_connection = %d\n\n", conf.max_connection);
+    
+    fprintf(f, "[client]\n");
+    fprintf(f, "url = %s\n", config.url);
+    fprintf(f, "port = %d\n\n", config.port);
+    fprintf(f, "persist = %s\n", config.persist ? "true" : "false");
+    fprintf(f, "retry = %s\n\n", config.retry ? "true" : "false");
+    fprintf(f, "# retry time in seconds\n");
+    fprintf(f, "retry_time = %d\n\n", config.retry_time);
+    fprintf(f, "# no. of times to retry\n");
+    fprintf(f, "retry_no = %d\n", config.retry_no);
+    
+    fclose(f);
+    printf("Generated default configuration file: %s\n", filename);
+}
 
+int file_exists(const char* filename) {
+    return access(filename, F_OK) == 0;
+}
+
+void parse_args(int argc, char* argv[]) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--url") == 0 && i + 1 < argc) {
+            strncpy(config.url, argv[i + 1], sizeof(config.url) - 1);
+            i++; // Skip next arg
+        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            config.port = atoi(argv[i + 1]);
+            i++;
+        } else if (strcmp(argv[i], "--gen-config") == 0) {
+            generate_default_config("config.ini");
+            exit(0);
+        } else if (strcmp(argv[i], "--help") == 0) {
+            printf("Usage: %s [OPTIONS]\n", argv[0]);
+            printf("Options:\n");
+            printf("  --url URL          Set client URL\n");
+            printf("  --port PORT        Set client port\n");
+            printf("  --generate-config  Generate default config.ini and exit\n");
+            printf("  --help             Show this help\n");
+            exit(0);
+        }
+    }
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 1) {
-        fprintf(stderr, "Usage: %s\n", argv[0]);
+    const char* config_file = "config.ini";
+    parse_args(argc, argv);
+
+    if (!file_exists(config_file)) {
+        printf("Config file not found. Generating default configuration...\n");
+        generate_default_config(config_file);
+    }
+
+    if (ini_parse(config_file, handler, (void*)&config) < 0) {
+        printf("Can't load '%s'\n", config_file);
         return 1;
     }
 
-    handle_args();
-
-    if (ini_parse("config.ini", handler, (void*)&config) < 0) {
-        //printf("Can't load 'test.ini'\n");
-        return 1;
-    }
+    //struct client_conf final_conf = config; // Copy loaded config
+    parse_args(argc, argv); 
 
     /* color scheme */
     pmt_color color = rand_color_init();
