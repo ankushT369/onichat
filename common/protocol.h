@@ -7,6 +7,8 @@
 #include "log.h"
 #include "types.h"
 
+#define MAX_PAYLOAD 6553
+
 enum command {
     CMD_GET_USERNAME = 0x01,
     CMD_SEND_MESSAGE = 0x02,
@@ -21,7 +23,6 @@ struct response {
 };
 
 /* message protocol */
-// s_packet server_packet       r_packet packet
 typedef struct packet {
     uint8_t status;
     size_t len;
