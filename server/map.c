@@ -1,4 +1,5 @@
 #include "map.h"
+#include "els.h"
 
 void add_client_map(khash_t(client)* map, connection* c) {
     int ret;
