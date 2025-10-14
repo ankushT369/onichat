@@ -2,10 +2,13 @@
 #define MAP_H
 
 #include "khash.h"
-#include "els.h"
+
+typedef int fd_t;
+typedef struct connection connection;
 
 KHASH_MAP_INIT_INT(client, connection*)
 KHASH_SET_INIT_STR(strset)
+
 
 void add_client_map(khash_t(client)* map, connection* c);
 connection* get_client_map(khash_t(client)* map, fd_t fd);

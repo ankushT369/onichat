@@ -5,6 +5,9 @@
 #include <arpa/inet.h>
 #include <sys/epoll.h>
 
+#include "map.h"
+#include "protocol.h"
+
 #define MAX_EVENT 100
 #define BUFFER_SIZE 4096
 
@@ -14,10 +17,6 @@ typedef struct epoll_event epoll_event;
 
 typedef struct els els;
 
-typedef enum client_state {
-    C_DIS,
-    C_CON,
-} state;
 
 typedef struct els_config {
     const char* host;
@@ -29,7 +28,6 @@ typedef struct els_config {
 
 typedef struct connection {
     fd_t client;
-    state c_st;
 
     char username[16];
     size_t usrlen;
@@ -45,9 +43,12 @@ struct address {
 els* els_create(const els_config* config);
 void els_destroy(els* e);
 
-connection* els_accept(els* e, connection** conn);
-
+void els_accept(els* e, connection** conn);
 void els_run(els*);
+
+void els_cleanup(fd_t client_fd, khash_t(strset) *h, khash_t(client)* conn_map, fd_t epfd);
+
+void els_broadcast(fd_t client_fd, server_packet packet);
 
 
 #endif // EPS_H

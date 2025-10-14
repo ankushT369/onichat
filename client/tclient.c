@@ -32,6 +32,7 @@ struct client_conf config = {
 
 /* Thread to continuously receive messages */
 void *recv_loop(void *arg) {
+    (void)arg;
     while (true) {
         server_packet pack;
         ssize_t n;
@@ -83,9 +84,13 @@ void *recv_loop(void *arg) {
                 if (sock == -1)
                     exit(0);
                 recv_loop(NULL);
-                //exit(0);
             }
             received += n;
+        }
+
+        if (pack.len <= 0 || pack.len > MAX_PAYLOAD) {
+            pack.len = 0;
+            continue;
         }
 
         /* Read payload */
@@ -103,10 +108,10 @@ void *recv_loop(void *arg) {
                 if (sock == -1)
                     exit(0);
                 recv_loop(NULL);
-                //exit(0);
             }
             received += n;
         }
+        pack.len = (received == pack.len) ? pack.len : received;
         pack.payload[pack.len] = '\0';
 
         char reply_prompt[128];
@@ -174,7 +179,12 @@ size_t send_data(char* data, int sock) {
     packet pack;
 
     pack.status = CMD_SEND_MESSAGE;
-    pack.len = strlen(data);
+    pack.len = strnlen(data, MAX_PAYLOAD);
+
+    if (pack.len == 0 || pack.len > MAX_PAYLOAD) {
+        return 0;
+    }
+
     pack.payload = malloc(pack.len + 1);
 
     strncpy(pack.payload, data, pack.len);
@@ -231,7 +241,7 @@ int main(int argc, char *argv[]) {
     handle_args();
 
     if (ini_parse("config.ini", handler, (void*)&config) < 0) {
-        printf("Can't load 'test.ini'\n");
+        //printf("Can't load 'test.ini'\n");
         return 1;
     }
 
@@ -243,7 +253,7 @@ int main(int argc, char *argv[]) {
     sock = connect_via_tor(config);
     if (sock < 0) return 1;
 
-    /* register user will use register protocol */
+    /* register_user will use register protocol */
     if (register_user(sock) == -1) {
         return EXIT_FAILURE;
     }
@@ -266,7 +276,15 @@ int main(int argc, char *argv[]) {
             // Send message
             size_t n = send_data(line, sock);
             if (n == 0) {
+                rl_save_prompt();
+                rl_replace_line("", 0);
+                rl_redisplay();
 
+                printf("Packet dropped invalid size.\n");
+                fflush(stdout);
+
+                rl_restore_prompt();
+                rl_redisplay();
             }
 
             // Overwrite typed line with timestamped version
