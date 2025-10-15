@@ -286,7 +286,7 @@ void parse_args(int argc, char* argv[]) {
             printf("Options:\n");
             printf("  --url URL          Set client URL\n");
             printf("  --port PORT        Set client port\n");
-            printf("  --generate-config  Generate default config.ini and exit\n");
+            printf("  --gen-config  Generate default config.ini and exit\n");
             printf("  --help             Show this help\n");
             exit(0);
         }
@@ -294,6 +294,16 @@ void parse_args(int argc, char* argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+    if (argc == 1) {
+        printf("Usage: %s [OPTIONS]\n", argv[0]);
+        printf("Options:\n");
+        printf("  --url URL          Set client URL\n");
+        printf("  --port PORT        Set client port\n");
+        printf("  --gen-config  Generate default config.ini and exit\n");
+        printf("  --help             Show this help\n");
+        exit(EXIT_SUCCESS);
+    }
+
     const char* config_file = "config.ini";
     parse_args(argc, argv);
 
