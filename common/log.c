@@ -1,5 +1,6 @@
 #include "log.h"
 
+#ifndef __ANDROID__
 zlog_category_t* server = NULL;
 
 int log_init(const char *logconf) {
@@ -18,3 +19,4 @@ int log_init(const char *logconf) {
 
     return 1;
 }
+#endif // __ANDROID__

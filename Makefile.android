@@ -1,0 +1,139 @@
+# Android/Termux specific Makefile
+# ###################################################################
+# Usage: make -f Makefile.android
+# Commands:
+#
+# Build everything (checks env, installs deps, compiles)
+# $ make -f Makefile.android
+#
+# Only check dependencies (don't install)
+# $ make -f Makefile.android check-only
+#
+# Only install dependencies
+# $ make -f Makefile.android install-deps
+#
+# Build without dependency checks (if you know they're installed)
+# $ make -f Makefile.android check_env $(TARGET)
+#
+# Install to system bin directory
+# $ make -f Makefile.android install
+#
+# Clean build
+# $ make -f Makefile.android clean
+#
+# Show build info
+# $ make -f Makefile.android info
+# ####################################################################
+
+# Compiler
+CC = gcc
+CFLAGS = -Icommon/ -Iclient/ -Wall -Wextra
+
+# Binary name
+TARGET = onichat
+BUILD_DIR = build-android
+BIN_DIR = $(BUILD_DIR)/bin
+
+# Source files
+SOURCES = \
+	common/ini.c \
+	common/protocol.c \
+	common/log.c \
+	client/color.c \
+	client/tclient.c \
+	client/tconnect.c
+
+# Check if we're actually on Android
+CHECK_ANDROID := $(shell test -d /data/data/com.termux/files/usr && echo "ANDROID" || echo "NOT_ANDROID")
+
+# Default target
+all: check_env check_deps $(TARGET)
+
+$(TARGET): $(SOURCES) | $(BIN_DIR)
+	@echo "Building for Android..."
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/$(TARGET) $(SOURCES) -lreadline -lpthread
+	@echo "Build successful: $(BIN_DIR)/$(TARGET)"
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+# Check if we're in Termux environment
+check_env:
+ifeq ($(CHECK_ANDROID),NOT_ANDROID)
+	$(error This Makefile is for Android/Termux only. Detected: $(shell uname -s))
+else
+	@echo "✓ Android/Termux environment detected"
+endif
+
+# Check for required dependencies
+check_deps:
+	@echo "Checking dependencies..."
+	
+	# Check readline
+	@if ! pkg list-installed | grep -q "readline"; then \
+		echo "✗ readline not found. Installing..."; \
+		pkg install -y readline; \
+	else \
+		echo "✓ readline installed"; \
+	fi
+	
+	# Check compiler
+	@if ! command -v $(CC) >/dev/null 2>&1; then \
+		echo "✗ gcc not found. Installing..."; \
+		pkg install -y clang; \
+	else \
+		echo "✓ compiler installed"; \
+	fi
+	
+	# Verify library presence
+	@echo "Verifying libraries..."
+	@if ! pkg list-installed | grep -q "readline"; then \
+		echo "ERROR: readline installation failed"; \
+		exit 1; \
+	fi
+
+# Install dependencies only
+install-deps: check_env
+	@pkg install -y readline clang
+	@echo "✓ All dependencies installed"
+
+# Check if libraries are available without installing
+check-only:
+	@echo "Dependency check:"
+	@if pkg list-installed | grep -q "readline"; then \
+		echo "✓ readline: installed"; \
+	else \
+		echo "✗ readline: missing"; \
+	fi
+	@if command -v $(CC) >/dev/null 2>&1; then \
+		echo "✓ compiler: installed"; \
+	else \
+		echo "✗ compiler: missing"; \
+	fi
+
+# Clean build
+clean:
+	rm -rf $(BUILD_DIR)
+
+# Install to termux $PREFIX/bin
+install: $(TARGET)
+	cp $(BIN_DIR)/$(TARGET) $(PREFIX)/bin/
+	chmod +x $(PREFIX)/bin/$(TARGET)
+	@echo "✓ Installed to $(PREFIX)/bin/$(TARGET)"
+
+# Uninstall
+uninstall:
+	rm -f $(PREFIX)/bin/$(TARGET)
+	@echo "✓ Uninstalled from $(PREFIX)/bin"
+
+# Show build info
+info:
+	@echo "=== Android Build Information ==="
+	@echo "Compiler: $(CC)"
+	@echo "Target: $(TARGET)"
+	@echo "Build dir: $(BUILD_DIR)"
+	@echo "Sources: $(words $(SOURCES)) files"
+	@echo "Environment: $(CHECK_ANDROID)"
+	@echo "Libraries: -lreadline -lpthread"
+
+.PHONY: all check_env check_deps install-deps check-only clean install uninstall info
