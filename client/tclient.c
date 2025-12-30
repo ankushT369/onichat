@@ -156,7 +156,7 @@ void *recv_loop(void *arg) {
 }
 
 int register_user(int sock) {
-    uint8_t cmd = CMD_GET_USERNAME;
+    uint8_t cmd = CMD_GET_CLIENT_USERNAME;
     write(sock, &cmd, sizeof(cmd));
     read(sock, &resp, sizeof(resp));
 
@@ -191,7 +191,7 @@ void print_with_timestamp(char* username, pmt_color color, const char* line) {
 size_t send_data(char* data, int sock) {
     packet pack;
 
-    pack.status = CMD_SEND_MESSAGE;
+    pack.status = CMD_SEND_CLIENT_MESSAGE;
     pack.len = strnlen(data, MAX_PAYLOAD);
 
     if (pack.len == 0 || pack.len > MAX_PAYLOAD) {

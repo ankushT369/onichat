@@ -260,7 +260,7 @@ void els_run(els* e) {
 
                 if (n > 0) {
                     /* register protocol */ 
-                    if (status == CMD_GET_USERNAME && client_fd_arr[client_fd] == 0) {
+                    if (status == CMD_GET_CLIENT_USERNAME && client_fd_arr[client_fd] == 0) {
                         connection* c = get_client_map(conn_map, client_fd);
                         /* generate random user name which doesnt exist in server */
                         get_username(h, c);
@@ -273,6 +273,22 @@ void els_run(els* e) {
                         client_fd_arr[client_fd] = 1;
 
                         write(client_fd, &resp, sizeof(resp));
+
+                        packet rpack = {
+                            .status = 0x02,
+                            .len = 9,
+                            .payload = "connected",
+                        };/* recv_data(client_fd);*/
+                        /* check validity and clean the memeory */
+                        if (rpack.len == 0) {
+                            els_cleanup(client_fd, h, conn_map, e->epfd);
+                            continue;
+                        }
+                        connection* s_conn = get_client_map(conn_map, client_fd);
+                        server_packet spack = prepare_send_packet(s_conn, rpack);
+
+                        /* NOTE: Later to be optimise */
+                        els_broadcast(client_fd, spack);
                     }
                     /* message protocol */
                     else {

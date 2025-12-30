@@ -2,11 +2,13 @@
 #define LOG_H
 
 #ifndef __ANDROID__
+#ifndef CLIENT
 #include <zlog.h>
 
 extern zlog_category_t* server;
 
 int log_init(const char* logconf);
+#endif
 
 #endif // __ANDROID__
 

@@ -10,8 +10,8 @@
 #define MAX_PAYLOAD 6553
 
 enum command {
-    CMD_GET_USERNAME = 0x01,
-    CMD_SEND_MESSAGE = 0x02,
+    CMD_GET_CLIENT_USERNAME = 0x01,
+    CMD_SEND_CLIENT_MESSAGE = 0x02,
     CMD_GET_STATUS   = 0x03,
     CMD_PING         = 0x04
 };
@@ -30,6 +30,7 @@ typedef struct packet {
 } packet;
 
 typedef struct server_packet {
+    uint8_t status;
     size_t usrlen;
     char* username;
     size_t len;
@@ -37,7 +38,9 @@ typedef struct server_packet {
 } server_packet;
 
 
+#ifndef DCLIENT
 packet recv_data(fd_t client_fd);
+#endif // DCLIENT
 //packet send_data(fd_t client_fd);
 
 void send_usr();
