@@ -60,3 +60,5 @@ build/
 
 # files
 backup.makefile
+
+data-dir-*
