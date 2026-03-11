@@ -16,7 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/cretz/bine/tor"
-	_ "github.com/ipsn/go-libtor"
+	libtor "github.com/ipsn/go-libtor"
 )
 
 const (
@@ -140,8 +140,12 @@ func runServer() {
 	ctx := context.Background()
 
 	fmt.Println("Starting embedded Tor...")
+	
+	t, err := tor.Start(ctx, &tor.StartConf{
+		ProcessCreator: libtor.Creator,
+		DataDir:        "./tor-data",
+	})
 
-	t, err := tor.Start(ctx, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -199,7 +203,11 @@ func connect(addr string) (net.Conn, string) {
 
 		ctx := context.Background()
 
-		t, err := tor.Start(ctx, nil)
+		t, err := tor.Start(ctx, &tor.StartConf{
+			ProcessCreator: libtor.Creator,
+			DataDir:        "./tor-client",
+		})
+
 		if err != nil {
 			log.Fatal(err)
 		}
